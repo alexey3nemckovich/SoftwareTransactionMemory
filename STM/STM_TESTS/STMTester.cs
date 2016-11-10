@@ -19,6 +19,7 @@ namespace STM_TESTS
         [TestMethod]
         public void TestTransactionConflict()
         {
+            Stm.Init();
             File.WriteAllText(logFileName, string.Empty);
             var variable_1 = new StmMemory<int>();
             var variable_2 = new StmMemory<int>();
@@ -52,6 +53,7 @@ namespace STM_TESTS
         [TestMethod]
         public void TestCorrectSTMWork()
         {
+            Stm.Init();
             File.WriteAllText(logFileName, string.Empty);
             var variable_1 = new StmMemory<int>();
             var variable_2 = new StmMemory<int>();

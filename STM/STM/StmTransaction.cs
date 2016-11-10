@@ -27,7 +27,7 @@ namespace STM
         private List<IStmTransaction> subTransactions;
 
         //lockers
-        private object childsLocker = new object();
+        private object subTransactionsLocker = new object();
         private static object incrementLocker = new object();
 
         public StmTransaction(TransactionalAction action)
@@ -35,7 +35,7 @@ namespace STM
             state = I_STM_TRANSACTION_STATE.ON_EXECUTE;
             this.action = action;
             parentTransaction = null;
-            subTransactions = null;
+            subTransactions = new List<IStmTransaction>();
             memoryRefsToUpdate = new HashSet<object>();
             memoryChanges = new Dictionary<object, object>();
             memoryStartVersions = new Dictionary<object, int>();
@@ -47,7 +47,7 @@ namespace STM
             }
             InitName();
         }
-            
+        
         private void InitName()
         {
             StringBuilder stringBuilder = new StringBuilder();
@@ -56,22 +56,28 @@ namespace STM
                 stringBuilder.Append('\t');
             }
             stringBuilder.Append("TRANSACTION ");
-            Stack<int> transactionNumbers = new Stack<int>();
-            transactionNumbers.Push(number);
-            IStmTransaction parentTransaction = ParentTransaction;
-            while(parentTransaction != null)
+            stringBuilder.Append(number);
+            if(parentTransaction != null)
             {
-                transactionNumbers.Push(parentTransaction.Number);
-            }
-            while(transactionNumbers.Count != 0)
-            {
-                stringBuilder.Append(transactionNumbers.Pop());
-                if (transactionNumbers.Count != 0)
-                {
-                    stringBuilder.Append('.');
-                }
+                stringBuilder.Append(string.Format("(parent - {0})", parentTransaction.Number));
             }
             name = stringBuilder.ToString();
+        }
+
+        public object SubTransactionsLocker
+        {
+            get
+            {
+                return subTransactionsLocker;
+            }
+        }
+
+        public int CountSubtransactions
+        {
+            get
+            {
+                return subTransactions.Count;
+            }
         }
 
         public string Name
@@ -114,14 +120,6 @@ namespace STM
             }
         }
 
-        private StmTransaction ParentStmTransaction
-        {
-            get
-            {
-                return (StmTransaction)parentTransaction;
-            }
-        }
-
         public int Number
         {
             get
@@ -132,34 +130,25 @@ namespace STM
 
         public void AddSubTransaction(IStmTransaction child)
         {
-            lock(childsLocker)
+            lock(subTransactionsLocker)
             {
-                if (subTransactions == null)
-                {
-                    subTransactions = new List<IStmTransaction>();
-                }
                 subTransactions.Add(child);
             }
         }
         
-        public void SetParentTransaction(IStmTransaction parentTransaction)
+        public void SetParentTransaction(IStmTransaction parentTransactionToSet)
         {
-            this.parentTransaction = parentTransaction;
-            StmTransaction parentStmTransaction = ParentStmTransaction;
-            imbrication = parentStmTransaction.Imbrication + 1;
-            lock (parentStmTransaction.childsLocker)
+            if(parentTransaction == null)
             {
-                if (parentStmTransaction.subTransactions != null)
+                parentTransaction = parentTransactionToSet;
+                lock (parentTransaction.SubTransactionsLocker)
                 {
-                    number = parentStmTransaction.subTransactions[parentStmTransaction.subTransactions.Count - 1].Number + 1;
+                    number = parentTransaction.CountSubtransactions;
+                    parentTransaction.AddSubTransaction(this);
                 }
-                else
-                {
-                    number = 0;
-                }
-                this.parentTransaction.AddSubTransaction(this);
+                imbrication = parentTransaction.Imbrication + 1;
+                InitName();
             }
-            InitName();
         }
 
         public void Begin()
@@ -167,28 +156,23 @@ namespace STM
             action.Invoke(this);
         }
 
-        private void SetMemoryVersion(object stmRef)
+        public void SetMemoryVersion(object stmRef)
         {
             int[] memoryVersion = (int[])stmRef.GetType().GetProperty("Version").GetValue(stmRef);
             memoryVersion[imbrication] = number;
-            if (parentTransaction != null)
-            {
-                StmTransaction parentStmTransaction = ParentStmTransaction;
-                parentStmTransaction.SetMemoryVersion(stmRef);
-            }
         }
 
-        private void FixMemoryVersion<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple) where T : struct
+        public void FixMemoryVersion<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple) where T : struct
         {
+            if(!memoryStartVersions.ContainsKey(memoryRef))
             memoryStartVersions.Add(memoryRef, memoryTuple.version[imbrication]);
             if (parentTransaction != null)
             {
-                StmTransaction parentStmTransaction = ParentStmTransaction;
-                parentStmTransaction.FixMemoryVersion(memoryRef, memoryTuple);
+                parentTransaction.FixMemoryVersion(memoryRef, memoryTuple);
             }
         }
 
-        private bool ValidateMemoryVersion(object memoryRef)
+        public bool ValidateMemoryVersion(object memoryRef)
         {
             int[] memoryVersion = (int[])memoryRef.GetType().GetProperty("Version").GetValue(memoryRef);
             if (memoryVersion[imbrication] != memoryStartVersions[memoryRef])
@@ -197,6 +181,13 @@ namespace STM
             }
             else
             {
+                if(parentTransaction != null)
+                {
+                    if(!parentTransaction.ValidateMemoryVersion(memoryRef))
+                    {
+                        return false;
+                    }
+                }
                 return true;
             }
         }
@@ -210,15 +201,28 @@ namespace STM
                     state = I_STM_TRANSACTION_STATE.CONFLICT;
                     return false;
                 }
-                else
+            }
+            return true;
+        }
+
+        private bool ValidateSubtransactions()
+        {
+            int countSubtransactionsCommited = 0;
+            while (countSubtransactionsCommited != subTransactions.Count)
+            {
+                foreach (IStmTransaction subTransaction in subTransactions)
                 {
-                    if (parentTransaction != null)
+                    I_STM_TRANSACTION_STATE subTransactionState = subTransaction.State;
+                    switch (subTransactionState)
                     {
-                        if (!ParentStmTransaction.ValidateMemoryVersion(memoryRef))
-                        {
-                            state = I_STM_TRANSACTION_STATE.PARENT_CONFLICT;
+                        case I_STM_TRANSACTION_STATE.PARENT_CONFLICT:
+                            state = I_STM_TRANSACTION_STATE.CONFLICT;
                             return false;
-                        }
+                        case I_STM_TRANSACTION_STATE.COMMITED:
+                            countSubtransactionsCommited++;
+                            break;
+                        default:
+                            break;
                     }
                 }
             }
@@ -227,46 +231,33 @@ namespace STM
 
         public virtual bool TryCommit()
         {
-            Monitor.Enter(Stm.commitLock);
+            Monitor.Enter(Stm.commitLock[Imbrication]);
             try
             {
-                if(!IsMemoryVersionCorrect())
+                ///Validate subtransactions
+                if(!ValidateSubtransactions())
                 {
                     return false;
                 }
-                //if (childTransactions.Count != 0)
-                //{
-                //    while (!AllChildTransactionsCommited())
-                //    {
-                //        Monitor.Wait(Stm.commitLock);
-                //    }
-                //}
+                ///Validate self
+                if (!IsMemoryVersionCorrect())
+                {
+                    return false;
+                }
+                ///Update memory
                 foreach (object memoryRef in memoryRefsToUpdate)
                 {
                     SetMemoryVersion(memoryRef);
                     memoryRef.GetType().GetMethod("set_Value").Invoke(memoryRef, new object[] { memoryChanges[memoryRef] });
                 }
                 state = I_STM_TRANSACTION_STATE.COMMITED;
-                //Monitor.Pulse(Stm.commitLock);
                 return true;
             }
             finally
             {
-                Monitor.Exit(Stm.commitLock);
+                Monitor.Exit(Stm.commitLock[Imbrication]);
             }
         }
-
-        //private bool AllChildTransactionsCommited()
-        //{
-        //    foreach(IStmTransaction childTransaction in childTransactions)
-        //    {
-        //        if(childTransaction.State != I_STM_TRANSACTION_STATE.COMMITED)
-        //        {
-        //            return false;
-        //        }
-        //    }
-        //    return true;
-        //}
 
         public virtual void Set<T>(StmMemory<T> memoryRef, object value, MemoryTuple<T> memoryTuple = null) where T : struct
         {
@@ -297,32 +288,34 @@ namespace STM
         private void FixMemoryChange<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTyple) where T : struct
         {
             memoryChanges.Add(memoryRef, memoryTyple.value);
-            if (!memoryStartVersions.ContainsKey(memoryRef))
+            lock(subTransactionsLocker)
             {
-                FixMemoryVersion(memoryRef, memoryTyple);
+                if (!memoryStartVersions.ContainsKey(memoryRef))
+                {
+                    FixMemoryVersion(memoryRef, memoryTyple);
+                }
             }
         }
         
         public virtual void Rollback()
         {
+            if (subTransactions.Count != 0)
+            {
+                foreach (StmTransaction subTransaction in subTransactions)
+                {
+                    subTransaction.Rollback();
+                }
+            }
+            subTransactions.Clear();
+            if (state == I_STM_TRANSACTION_STATE.COMMITED)
+            {
+                //
+                //set memory to previous version
+                //
+            }
             memoryRefsToUpdate.Clear();
             memoryChanges.Clear();
             memoryStartVersions.Clear();
-            //if(childTransactions != null)
-            //{
-            //    foreach(StmTransaction childTransaction in childTransactions)
-            //    {
-            //        childTransaction.Rollback();
-            //    }
-            //}
-            //if(parentTransaction != null)
-            //{
-            //    parentTransaction.childTransactions.Remove(this);
-            //    foreach(object stmRef in stmRefsTransactionStartVersions)
-            //    {
-            //        parentTransaction.stmRefsTransactionStartVersions.Remove(stmRef);
-            //    }
-            //}
         }
 
     }

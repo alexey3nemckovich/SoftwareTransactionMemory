@@ -15,6 +15,23 @@ namespace STM
             baseTransaction = stmTransaction;
         }
 
+
+        public object SubTransactionsLocker
+        {
+            get
+            {
+                return baseTransaction.SubTransactionsLocker;
+            }
+        }
+
+        public int CountSubtransactions
+        {
+            get
+            {
+                return baseTransaction.CountSubtransactions;
+            }
+        }
+
         public string Name
         {
             get
@@ -80,6 +97,21 @@ namespace STM
             }
         }
 
+        public void SetMemoryVersion(object stmRef)
+        {
+            baseTransaction.SetMemoryVersion(stmRef);
+        }
+
+        public void FixMemoryVersion<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple) where T : struct
+        {
+            baseTransaction.FixMemoryVersion(memoryRef, memoryTuple);
+        }
+
+        public bool ValidateMemoryVersion(object memoryRef)
+        {
+            return baseTransaction.ValidateMemoryVersion(memoryRef);
+        }
+
         public void Rollback()
         {
             LogAction(baseTransaction.Name + " Rollback");
@@ -88,7 +120,7 @@ namespace STM
 
         public bool TryCommit()
         {
-            lock(Stm.commitLock)
+            lock(Stm.commitLock[Imbrication])
             {
                 LogAction(baseTransaction.Name + " TryCommit");
                 bool commitResult = baseTransaction.TryCommit();
