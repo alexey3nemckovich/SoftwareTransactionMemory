@@ -5,7 +5,7 @@
     {
 
         public T value;
-        public int[] version;
+        public volatile int[] version;
 
         public MemoryTuple(T value, int[] version)
         {
