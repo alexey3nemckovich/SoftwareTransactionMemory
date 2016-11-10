@@ -1,4 +1,6 @@
 ﻿using System.IO;
+using System.Threading;
+using System.Collections.Generic;
 using TransactionalAction = System.Action<STM.IStmTransaction>;
 
 namespace STM
@@ -7,14 +9,13 @@ namespace STM
     public class LoggingStmTransaction : IStmTransaction
     {
 
-        private StmTransaction baseTransaction;
+        private IStmTransaction baseTransaction;
         private static object LogLocker = new object();
 
-        public LoggingStmTransaction(StmTransaction stmTransaction)
+        public LoggingStmTransaction(IStmTransaction stmTransaction)
         {
             baseTransaction = stmTransaction;
         }
-
 
         public object SubTransactionsLocker
         {
@@ -70,6 +71,10 @@ namespace STM
             {
                 return baseTransaction.State;
             }
+            set
+            {
+                baseTransaction.State = value;
+            }
         }
 
         public IStmTransaction ParentTransaction
@@ -83,6 +88,7 @@ namespace STM
         public void Begin()
         {
             LogAction(Name + " start");
+            baseTransaction.State = I_STM_TRANSACTION_STATE.ON_EXECUTE;
             baseTransaction.Action.Invoke(this);
         }
 
@@ -100,6 +106,14 @@ namespace STM
         public void SetMemoryVersion(object stmRef)
         {
             baseTransaction.SetMemoryVersion(stmRef);
+        }
+
+        List<IStmTransaction> Subtransactions
+        {
+            get
+            {
+                return baseTransaction.SubTransactions;
+            }
         }
 
         public void FixMemoryVersion<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple) where T : struct
@@ -120,12 +134,17 @@ namespace STM
 
         public bool TryCommit()
         {
-            lock(Stm.commitLock[Imbrication])
+            Monitor.Enter(Stm.commitLock[Imbrication]);
+            try
             {
                 LogAction(baseTransaction.Name + " TryCommit");
                 bool commitResult = baseTransaction.TryCommit();
                 LogAction(baseTransaction.Name + " " + baseTransaction.State);
                 return commitResult;
+            }
+            finally
+            {
+                Monitor.Exit(Stm.commitLock[Imbrication]);
             }
         }
 
@@ -145,8 +164,13 @@ namespace STM
             {
                 memoryTuple = MemoryTuple<T>.Get((T)value, memoryRef.Version);
             }
-            LogAction(baseTransaction.Name + " set value to " + memoryRef.ToString() + " version = " + memoryTuple.version[Imbrication]);
             baseTransaction.Set(memoryRef, value, memoryTuple);
+            string log = baseTransaction.Name + " set value to " + memoryRef.ToString() + " version = " + memoryTuple.version[Imbrication];
+            if (baseTransaction.ParentTransaction != null)
+            {
+                log += " parent version = " + baseTransaction.ParentTransaction.GetMemoryStartVersions()[memoryRef];
+            }
+            LogAction(log);
         }
 
         public void SetParentTransaction(IStmTransaction parentTransaction)
@@ -157,6 +181,19 @@ namespace STM
         public void AddSubTransaction(IStmTransaction subTransaction)
         {
             baseTransaction.AddSubTransaction(subTransaction);
+        }
+
+        public List<IStmTransaction> SubTransactions
+        {
+            get
+            {
+                return baseTransaction.SubTransactions;
+            }
+        }
+
+        public Dictionary<object, int> GetMemoryStartVersions()
+        {
+            return baseTransaction.GetMemoryStartVersions();
         }
 
     }
