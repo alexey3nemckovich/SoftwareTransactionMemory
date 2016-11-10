@@ -52,38 +52,6 @@ namespace STM
                             transaction.Rollback();
                             commited = false;
                         }
-                        //if (transaction.ParentTransaction != null)
-                        //{
-                        //    int countSubTransactionsCommited = 0;
-                        //    while (countSubTransactionsCommited != transaction.ParentTransaction.CountSubtransactions)
-                        //    {
-                        //        countSubTransactionsCommited = 1;
-                        //        bool wasParentConflict = false;
-                        //        foreach (IStmTransaction subTransaction in transaction.ParentTransaction.SubTransactions)
-                        //        {
-                        //            if (subTransaction.Number != transaction.Number)
-                        //            {
-                        //                switch (subTransaction.State)
-                        //                {
-                        //                    case I_STM_TRANSACTION_STATE.COMMITED:
-                        //                        countSubTransactionsCommited++;
-                        //                        break;
-                        //                    case I_STM_TRANSACTION_STATE.PARENT_CONFLICT:
-                        //                        wasParentConflict = true;
-                        //                        break;
-                        //                    default:
-                        //                        break;
-                        //                }
-                        //            }
-                        //        }
-                        //        if (wasParentConflict)
-                        //        {
-                        //            transaction.Rollback();
-                        //            commited = false;
-                        //            break;
-                        //        }
-                        //    }
-                        //}
                     }
                 }
             }
