@@ -12,10 +12,10 @@ namespace STM
         new IStmTransaction ParentTransaction { get; }
         new List<IStmTransaction> SubTransactions { get; }
         //Transactions interaction methods
-        void SetMemoryVersionsToCurrent();
-        ImbricationMemoryTuple<T> GetCurrentImbricationMemoryTuple<T>(object memoryRef) where T : struct;
-        void FixMemoryVersion<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple) where T : struct;
-        bool ValidateMemoryVersion(object memoryRef);
+        object GetTransactionMemoryValue(IInnerTransactionStmMemory memoryRef);
+        void   SetMemoryVersionsToCurrent();
+        void   FixMemoryVersion(IInnerTransactionStmMemory memoryRef, MemoryTuple memoryTuple);
+        bool   ValidateMemoryVersion(IInnerTransactionStmMemory memoryRef);
     }
 
 }

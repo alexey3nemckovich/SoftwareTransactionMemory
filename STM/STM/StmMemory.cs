@@ -3,7 +3,7 @@
 namespace STM
 {
 
-    public class StmMemory<T> : IStmMemory, Transaction.IInnerTransactionStmMemory where T : struct
+    public class StmMemory<T> : IStmMemory, IInnerTransactionStmMemory where T : struct
     {
 
         private T value;
@@ -13,7 +13,7 @@ namespace STM
         {
             get
             {
-                return version;
+                return (int[])version.Clone();
             }
         }
 

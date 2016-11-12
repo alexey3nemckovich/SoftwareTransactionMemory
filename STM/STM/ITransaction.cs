@@ -23,8 +23,8 @@ namespace STM
         void   Begin();
         bool   TryCommit();
         void   Rollback();
-        object Get(IStmMemory memoryRef);
-        void   Set(IStmMemory memoryRef, object value, MemoryTuple memoryTuple = null);
+        object Get(IStmMemory memoryRef, int[] memoryVersion = null);
+        void   Set(IStmMemory memoryRef, object value, int[] memoryVersion = null);
     }
 
 }
