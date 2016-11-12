@@ -1,101 +1,30 @@
-﻿using System;
-using System.Text;
-using System.Threading;
+﻿using System.Threading;
 using System.Collections.Generic;
 using TransactionalAction = System.Action<STM.IStmTransaction>;
 
 namespace STM
 {
     
-    public class StmTransaction : IStmTransaction
+    public class StmTransaction : Transaction, IStmTransaction
     {
 
-        //transaction properties
-        private string name;
+        //transaction properties values
         private TransactionalAction action;
-        private I_STM_TRANSACTION_STATE state;
-        private int number;
-        private int imbrication;
-        private static int transactionNumber = 0;
+   
+        //memoryRefs, witch appear or have changes in transaction
+        private HashSet<IStmMemory> memoryRefsToUpdate;
+        private Dictionary<IStmMemory, object> memoryChanges;
+        private Dictionary<IStmMemory, int> memoryStartVersions;
 
-        //refs to stmRefts, that have changes in transaction
-        private HashSet<object> memoryRefsToUpdate;
-        private Dictionary<object, object> memoryChanges;
-        private Dictionary<object, int> memoryStartVersions;
-
-        //refs to parent/sub transactions
-        private IStmTransaction parentTransaction;
-        private List<IStmTransaction> subTransactions;
-
-        //lockers
-        private object subTransactionsLocker = new object();
-        private static object incrementLocker = new object();
-
-        public StmTransaction(TransactionalAction action)
+        public StmTransaction(TransactionalAction action) : base()
         {
             this.action = action;
-            parentTransaction = null;
-            subTransactions = new List<IStmTransaction>();
-            memoryRefsToUpdate = new HashSet<object>();
-            memoryChanges = new Dictionary<object, object>();
-            memoryStartVersions = new Dictionary<object, int>();
-            imbrication = 0;
-            lock(incrementLocker)
-            {
-                transactionNumber++;
-                number = transactionNumber;
-            }
-            InitName();
-        }
-        
-        private void InitName()
-        {
-            StringBuilder stringBuilder = new StringBuilder();
-            for(int i = 0; i < imbrication; i++)
-            {
-                stringBuilder.Append('\t');
-            }
-            stringBuilder.Append("TRANSACTION ");
-            stringBuilder.Append(number);
-            if(parentTransaction != null)
-            {
-                stringBuilder.Append(string.Format("(parent - {0})", parentTransaction.Number));
-            }
-            name = stringBuilder.ToString();
+            memoryRefsToUpdate = new HashSet<IStmMemory>();
+            memoryChanges = new Dictionary<IStmMemory, object>();
+            memoryStartVersions = new Dictionary<IStmMemory, int>();
         }
 
-        public object SubTransactionsLocker
-        {
-            get
-            {
-                return subTransactionsLocker;
-            }
-        }
-
-        public int CountSubtransactions
-        {
-            get
-            {
-                return subTransactions.Count;
-            }
-        }
-
-        public string Name
-        {
-            get
-            {
-                return name;
-            }
-        }
-        
-        public int Imbrication
-        {
-            get
-            {
-                return imbrication;
-            }
-        }
-
+        //PROPERTIES
         public TransactionalAction Action
         {
             get
@@ -104,113 +33,122 @@ namespace STM
             }
         }
 
-        public I_STM_TRANSACTION_STATE State
+        public new IStmTransaction ParentTransaction
         {
             get
             {
-                return state;
-            }
-            set
-            {
-                state = value;
+                return (IStmTransaction)base.ParentTransaction;
             }
         }
 
-        public IStmTransaction ParentTransaction
+        public new List<IStmTransaction> SubTransactions
         {
             get
             {
-                return parentTransaction;
-            }
-        }
-
-        public int Number
-        {
-            get
-            {
-                return number;
-            }            
-        }
-
-        List<IStmTransaction> Subtransactions
-        {
-            get
-            {
-                return subTransactions;
-            }
-        }
-
-        public void AddSubTransaction(IStmTransaction child)
-        {
-            lock(subTransactionsLocker)
-            {
-                subTransactions.Add(child);
-            }
-        }
-
-        public void SetParentTransaction(IStmTransaction parentTransactionToSet)
-        {
-            if(parentTransaction == null)
-            {
-                parentTransaction = parentTransactionToSet;
-                lock (parentTransaction.SubTransactionsLocker)
+                List<IStmTransaction> stmSubTransactions = new List<IStmTransaction>();
+                List<ITransaction> subTransactions = base.subTransactions;
+                foreach(ITransaction subTransaction in subTransactions)
                 {
-                    number = parentTransaction.CountSubtransactions + 1;
-                    parentTransaction.AddSubTransaction(this);
+                    stmSubTransactions.Add((IStmTransaction)subTransaction);
                 }
-                imbrication = parentTransaction.Imbrication + 1;
-                InitName();
+                return stmSubTransactions;
             }
         }
 
-        public void Begin()
+        public override void Begin()
         {
-            state = I_STM_TRANSACTION_STATE.ON_EXECUTE;
+            state = I_TRANSACTION_STATE.ON_EXECUTE;
             action.Invoke(this);
-            state = I_STM_TRANSACTION_STATE.READY_TO_TRY_TO_COMMIT;
+            state = I_TRANSACTION_STATE.GOING_TO_COMMIT;
         }
 
-        public void SetMemoryVersion(object stmRef)
+        public override bool TryCommit()
         {
-            int[] memoryVersion = (int[])stmRef.GetType().GetProperty("Version").GetValue(stmRef);
-            memoryVersion[imbrication] = number;
-        }
-
-        public void FixMemoryVersion<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple) where T : struct
-        {
-            lock(subTransactionsLocker)
+            Monitor.Enter(Stm.commitLock[Imbrication]);
+            try
             {
-                if (!memoryStartVersions.ContainsKey(memoryRef))
+                if (!IsMemoryVersionCorrect())
                 {
-                    memoryStartVersions.Add(memoryRef, memoryTuple.version[imbrication]);
-                }
-                if (parentTransaction != null)
-                {
-                    parentTransaction.FixMemoryVersion(memoryRef, memoryTuple);
-                }
-            }
-        }
-
-        public bool ValidateMemoryVersion(object memoryRef)
-        {
-            if (parentTransaction != null)
-            {
-                if (!parentTransaction.ValidateMemoryVersion(memoryRef))
-                {
-                    state = I_STM_TRANSACTION_STATE.PARENT_CONFLICT;
                     return false;
                 }
+                foreach (object memoryRef in memoryRefsToUpdate)
+                {
+                    UpdateMemory(memoryRef);
+                }
+                state = I_TRANSACTION_STATE.COMMITED;
+                return true;
             }
-            int[] memoryVersion = (int[])memoryRef.GetType().GetProperty("Version").GetValue(memoryRef);
-            if (memoryVersion[imbrication] != memoryStartVersions[memoryRef])
+            finally
             {
-                state = I_STM_TRANSACTION_STATE.CONFLICT;
-                return false;
+                Monitor.Exit(Stm.commitLock[Imbrication]);
             }
-            return true;
         }
 
-        private bool IsMemoryVersionCorrect()
+        public void Set(IStmMemory memoryRef, object value, MemoryTuple memoryTuple = null)//ok
+        {
+            if (memoryTuple == null)
+            {
+                memoryTuple = MemoryTuple.Get(value, memoryRef.Version);
+            }
+            FixMemoryChange(memoryRef, memoryTuple);
+            if (!memoryRefsToUpdate.Contains(memoryRef))
+            {
+                memoryRefsToUpdate.Add(memoryRef);
+            }
+        }
+
+        public T Get<T>(StmMemory<T> memoryRef)
+        {
+            ImbricationMemoryTuple<T> memoryTuple = GetCurrentImbricationMemoryTuple<T>(memoryRef);
+            if (!memoryChanges.ContainsKey(memoryRef))
+            {
+                FixMemoryChange(memoryRef, memoryTuple);
+            }
+            return memoryTuple.value;
+        }
+
+        public override void Rollback()
+        {
+            if (state == I_TRANSACTION_STATE.PARENT_CONFLICT)
+            {
+                Monitor.Enter(parentTransaction.SubTransactionsLocker);
+                try
+                {
+                    if (parentTransaction.State != I_TRANSACTION_STATE.ROLLBACKED_BY_SUBTRANSACTION)
+                    {
+                        ParentTransaction.SetMemoryVersionsToCurrent();
+                    }
+                }
+                finally
+                {
+                    Monitor.Exit(parentTransaction.SubTransactionsLocker);
+                }
+            }
+            if (state == I_TRANSACTION_STATE.COMMITED)
+            {
+                //
+                //set memory to previous version
+                //
+            }
+            memoryRefsToUpdate.Clear();
+            memoryChanges.Clear();
+            memoryStartVersions.Clear();
+        }
+
+        public void SetMemoryVersionsToCurrent()
+        {
+            int countMemoryRefVersioned = memoryStartVersions.Count;
+            object[] memoryRefs = new object[countMemoryRefVersioned];
+            memoryStartVersions.Keys.CopyTo(memoryRefs, 0);
+            for (int i = 0; i < countMemoryRefVersioned; i++)
+            {
+                object memoryRef = memoryRefs[i];
+                memoryStartVersions[memoryRef] = GetCurrentImbricationMemoryVersion(memoryRef);
+            }
+            state = I_TRANSACTION_STATE.ROLLBACKED_BY_SUBTRANSACTION;
+        }
+
+        private bool IsMemoryVersionCorrect()//ok
         {
             foreach (object memoryRef in memoryChanges.Keys)
             {
@@ -222,115 +160,98 @@ namespace STM
             return true;
         }
 
-        public virtual bool TryCommit()
+        public bool ValidateMemoryVersion(object memoryRef)//ok
         {
-            Monitor.Enter(Stm.commitLock[Imbrication]);
-            try
+            if (parentTransaction != null)
             {
-                ///Validate self
-                if (!IsMemoryVersionCorrect())
+                if (!ParentTransaction.ValidateMemoryVersion(memoryRef))
                 {
+                    state = I_TRANSACTION_STATE.PARENT_CONFLICT;
                     return false;
                 }
-                ///Update memory
-                foreach (object memoryRef in memoryRefsToUpdate)
+            }
+            int[] memoryVersion = (int[])memoryRef.GetType().GetProperty("Version").GetValue(memoryRef);
+            if (memoryVersion[Imbrication] != memoryStartVersions[memoryRef])
+            {
+                state = I_TRANSACTION_STATE.CONFLICT;
+                return false;
+            }
+            return true;
+        }
+
+        public void FixMemoryVersion<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple) where T : struct//ok
+        {
+            lock (subTransactionsLocker)
+            {
+                if (!memoryStartVersions.ContainsKey(memoryRef))
                 {
-                    SetMemoryVersion(memoryRef);
-                    memoryRef.GetType().GetMethod("set_Value").Invoke(memoryRef, new object[] { memoryChanges[memoryRef] });
+                    memoryStartVersions.Add(memoryRef, memoryTuple.version[imbrication]);
+                    if (parentTransaction != null)
+                    {
+                        ParentTransaction.FixMemoryVersion(memoryRef, memoryTuple);
+                    }
                 }
-                state = I_STM_TRANSACTION_STATE.COMMITED;
-                return true;
-            }
-            finally
-            {
-                Monitor.Exit(Stm.commitLock[Imbrication]);
             }
         }
 
-        public virtual void Set<T>(StmMemory<T> memoryRef, object value, MemoryTuple<T> memoryTuple = null) where T : struct
+        private void FixMemoryChange<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTyple) where T : struct//ok
         {
-            if (memoryTuple == null)
+            if (memoryChanges.ContainsKey(memoryRef))
             {
-                memoryTuple = MemoryTuple<T>.Get(memoryRef.Value, memoryRef.Version);
+                memoryChanges[memoryRef] = memoryTyple.value;
             }
-            FixMemoryChange(memoryRef, memoryTuple);
-            if(!memoryRefsToUpdate.Contains(memoryRef))
+            else
             {
-                memoryRefsToUpdate.Add(memoryRef);
-            }
-        }
-
-        public virtual T Get<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple = null) where T : struct
-        {
-            if(memoryTuple == null)
-            {
-                memoryTuple = MemoryTuple<T>.Get(memoryRef.Value, memoryRef.Version);
-            }
-            if (!memoryChanges.ContainsKey(memoryRef))
-            {
-                FixMemoryChange(memoryRef, memoryTuple);
-            }
-            return (T)memoryChanges[memoryRef];
-        }
-
-        private void FixMemoryChange<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTyple) where T : struct
-        {
-            memoryChanges.Add(memoryRef, memoryTyple.value);
-            if (!memoryStartVersions.ContainsKey(memoryRef))
-            {
+                memoryChanges.Add(memoryRef, memoryTyple.value);
                 FixMemoryVersion(memoryRef, memoryTyple);
             }
         }
 
-        public List<IStmTransaction> SubTransactions
+        private void FixMemoryChange<T>(StmMemory<T> memoryRef, ImbricationMemoryTuple<T> transactionMemoryTyple) where T : struct//ok
         {
-            get
+            if (memoryChanges.ContainsKey(memoryRef))
             {
-                return subTransactions;
+                memoryChanges[memoryRef] = transactionMemoryTyple.value;
+            }
+            else
+            {
+                memoryChanges.Add(memoryRef, transactionMemoryTyple.value);
+                MemoryTuple<T> memoryTuple = MemoryTuple<T>.Get(transactionMemoryTyple.value, memoryRef.Version);
+                FixMemoryVersion(memoryRef, memoryTuple);
             }
         }
 
-        public Dictionary<object, int> GetMemoryStartVersions()
+        private void UpdateMemory(object memoryRef)//ok
         {
-            return memoryStartVersions;
+            int[] memoryVersion = (int[])memoryRef.GetType().GetProperty("Version").GetValue(memoryRef);
+            memoryVersion[Imbrication] = number;
+            memoryRef.GetType().GetProperty("Value").SetValue(memoryRef, memoryChanges[memoryRef]);
         }
 
-        public virtual void Rollback()
+        public ImbricationMemoryTuple<T> GetCurrentImbricationMemoryTuple<T>(object memoryRef) where T : struct
         {
-            if (state == I_STM_TRANSACTION_STATE.PARENT_CONFLICT)
+            if (memoryChanges.ContainsKey(memoryRef))
             {
-                Monitor.Enter(parentTransaction.SubTransactionsLocker);
-                try
+                return ImbricationMemoryTuple<T>.Get((T)memoryChanges[memoryRef], memoryStartVersions[memoryRef]);
+            }
+            else
+            {
+                if (parentTransaction != null)
                 {
-                    if (parentTransaction.State != I_STM_TRANSACTION_STATE.ROLLBACKED_BY_SUBTRANSACTION)
-                    {
-                        Dictionary<object, int> parentMemoryVersions = parentTransaction.GetMemoryStartVersions();
-                        int countMemoryVersions = parentMemoryVersions.Count;
-                        object[] memoryRefs = new object[countMemoryVersions];
-                        parentMemoryVersions.Keys.CopyTo(memoryRefs, 0);
-                        for (int i = 0; i < countMemoryVersions; i++)
-                        {
-                            object memoryRef = memoryRefs[i];
-                            int[] memoryVersion = ((int[])memoryRef.GetType().GetProperty("Version").GetValue(memoryRef));
-                            parentMemoryVersions[memoryRef] = memoryVersion[parentTransaction.Imbrication];
-                        }
-                        parentTransaction.State = I_STM_TRANSACTION_STATE.ROLLBACKED_BY_SUBTRANSACTION;
-                    }
+                    return ParentTransaction.GetCurrentImbricationMemoryTuple<T>(memoryRef);
                 }
-                finally
+                else
                 {
-                    Monitor.Exit(parentTransaction.SubTransactionsLocker);
+                    StmMemory<T> stmMemory = (StmMemory<T>)memoryRef;
+                    return ImbricationMemoryTuple<T>.Get(stmMemory.Value, stmMemory.GetVersionForImbrication(imbrication));
                 }
             }
-            if (state == I_STM_TRANSACTION_STATE.COMMITED)
-            {
-                //
-                //set memory to previous version
-                //
-            }
-            memoryRefsToUpdate.Clear();
-            memoryChanges.Clear();
-            memoryStartVersions.Clear();
+        }
+
+        private int GetCurrentImbricationMemoryVersion (object memoryRef)//ok
+        {
+            return (int)(memoryRef.GetType().GetMethod("GetVersionForImbrication").Invoke(memoryRef, new object[] { imbrication }));
+            // GetProperty("Version").GetValue(memoryRef))[imbrication];
         }
 
     }

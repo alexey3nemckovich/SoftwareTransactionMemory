@@ -121,10 +121,10 @@ namespace STM
                         {
                             switch (subTransaction.State)
                             {
-                                case I_STM_TRANSACTION_STATE.COMMITED:
+                                case I_TRANSACTION_STATE.COMMITED:
                                     countSubTransactionsCommited++;
                                     break;
-                                case I_STM_TRANSACTION_STATE.PARENT_CONFLICT:
+                                case I_TRANSACTION_STATE.PARENT_CONFLICT:
                                     wasParentConflict = true;
                                     break;
                                 default:

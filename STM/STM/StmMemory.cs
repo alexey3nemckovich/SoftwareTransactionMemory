@@ -1,34 +1,13 @@
-﻿namespace STM
+﻿using System;
+
+namespace STM
 {
 
-    public class StmMemory<T> where T : struct
+    public class StmMemory<T> : IStmMemory where T : struct
     {
 
-        MemoryTuple<T> memoryTyple;
-
-        public T Value
-        {
-            get
-            {
-                return memoryTyple.value;
-            }
-            set
-            {
-                memoryTyple.value = value;
-            }
-        }
-
-        public int[] Version
-        {
-            get
-            {
-                return memoryTyple.version;
-            }
-            set
-            {
-                memoryTyple.version = value;
-            }
-        }
+        private T value;
+        private int[] version;
 
         public StmMemory() : this(default(T))
         {
@@ -37,17 +16,53 @@
 
         public StmMemory(T value)
         {
-            memoryTyple = MemoryTuple<T>.Get(value, new int[100]);
+            this.value = value;
+            version = new int[100];
         }
 
-        public T Get(IStmTransaction transaction)
+        public Type GetMemoryType()
         {
-            return transaction.Get(this);
+            return typeof(T);
         }
 
-        public void Set(T value, IStmTransaction transaction)
+        public object GetValue()
         {
-            transaction.Set(this, value);
+            return value;
+        }
+
+        public void SetValue(object newValue)
+        {
+            CheckSettingValue(newValue);
+            value = (T)newValue;
+        }
+
+        public int GetVersionForImbrication(int imbrication)
+        {
+            return version[imbrication];
+        }
+
+        public void SetVersionForImbrication(int imbrication, int imbrVersion)
+        {
+            version[imbrication] = imbrVersion;
+        }
+
+        public object Get(ITransaction context)
+        {
+            return context.Get(this);
+        }
+
+        public void Set(ITransaction context, object value)
+        {
+            CheckSettingValue(value);
+            context.Set(this, value);
+        }
+
+        private void CheckSettingValue(object value)
+        {
+            if (!value.GetType().Equals(typeof(T)))
+            {
+                throw new ArgumentException("Value should be of type " + typeof(T).ToString() + "!");
+            }
         }
 
     }

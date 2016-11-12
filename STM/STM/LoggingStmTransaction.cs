@@ -6,7 +6,7 @@ using TransactionalAction = System.Action<STM.IStmTransaction>;
 namespace STM
 {
 
-    public class LoggingStmTransaction : IStmTransaction
+    public class LoggingStmTransaction : Transaction, ITransaction
     {
 
         private IStmTransaction baseTransaction;
@@ -17,46 +17,6 @@ namespace STM
             baseTransaction = stmTransaction;
         }
 
-        public object SubTransactionsLocker
-        {
-            get
-            {
-                return baseTransaction.SubTransactionsLocker;
-            }
-        }
-
-        public int CountSubtransactions
-        {
-            get
-            {
-                return baseTransaction.CountSubtransactions;
-            }
-        }
-
-        public string Name
-        {
-            get
-            {
-                return baseTransaction.Name;
-            }
-        }
-
-        public int Number
-        {
-            get
-            {
-                return baseTransaction.Number;
-            }
-        }
-
-        public int Imbrication
-        {
-            get
-            {
-                return baseTransaction.Imbrication;
-            }
-        }
-
         public TransactionalAction Action
         {
             get
@@ -65,30 +25,10 @@ namespace STM
             }
         }
 
-        public I_STM_TRANSACTION_STATE State
-        {
-            get
-            {
-                return baseTransaction.State;
-            }
-            set
-            {
-                baseTransaction.State = value;
-            }
-        }
-
-        public IStmTransaction ParentTransaction
-        {
-            get
-            {
-                return baseTransaction.ParentTransaction;
-            }
-        }
-
-        public void Begin()
+        public override void Begin()
         {
             LogAction(Name + " start");
-            baseTransaction.State = I_STM_TRANSACTION_STATE.ON_EXECUTE;
+            //baseTransaction.State = I_STM_TRANSACTION_STATE.ON_EXECUTE;
             baseTransaction.Action.Invoke(this);
         }
 
@@ -148,27 +88,24 @@ namespace STM
             }
         }
 
-        public T Get<T>(StmMemory<T> memoryRef, MemoryTuple<T> memoryTuple = null) where T : struct
+        public T Get<T>(StmMemory<T> memoryRef) where T : struct
         {
-            if(memoryTuple == null)
-            {
-                memoryTuple = MemoryTuple<T>.Get(memoryRef.Value, memoryRef.Version);
-            }
-            LogAction(baseTransaction.Name + " get value from " + memoryRef.ToString() + " version = " + memoryTuple.version[Imbrication]);
-            return baseTransaction.Get(memoryRef, memoryTuple);
+            T value = baseTransaction.Get(memoryRef);
+            LogAction(baseTransaction.Name + " get value from " + memoryRef.ToString() + " value = " + value.ToString());
+            return value;
         }
 
         public void Set<T>(StmMemory<T> memoryRef, object value, MemoryTuple<T> memoryTuple = null) where T : struct
         {
             if(memoryTuple == null)
             {
-                memoryTuple = MemoryTuple<T>.Get((T)value, memoryRef.Version);
+                memoryTuple = MemoryTuple<T>.Get((T)value, memoryRef.Version[Imbrication]);
             }
             baseTransaction.Set(memoryRef, value, memoryTuple);
-            string log = baseTransaction.Name + " set value to " + memoryRef.ToString() + " version = " + memoryTuple.version[Imbrication];
+            string log = baseTransaction.Name + " set value to " + memoryRef.ToString() + " value = " + memoryTuple.value;
             if (baseTransaction.ParentTransaction != null)
             {
-                log += " parent version = " + baseTransaction.ParentTransaction.GetMemoryStartVersions()[memoryRef];
+                log += " parent value = " + baseTransaction.ParentTransaction.GetMemoryTupleValue<T>(memoryRef).value;
             }
             LogAction(log);
         }
@@ -189,11 +126,6 @@ namespace STM
             {
                 return baseTransaction.SubTransactions;
             }
-        }
-
-        public Dictionary<object, int> GetMemoryStartVersions()
-        {
-            return baseTransaction.GetMemoryStartVersions();
         }
 
     }
