@@ -7,6 +7,17 @@ namespace STM
     public abstract class Transaction : ITransaction
     {
 
+        public interface IInnerTransactionStmMemory : IStmMemory
+        {
+            //Properties
+            int[] Version { get; }
+            //Methods
+            void   SetValue(object value);
+            object GetValue();
+            void   SetVersionForImbrication(int imbrication, int imbrVersion);
+            int    GetVersionForImbrication(int imbrication);
+        }
+
         //transaction properties values
         protected I_TRANSACTION_STATE state;
         protected string name;
@@ -148,9 +159,9 @@ namespace STM
 
         public abstract void Rollback();
 
-        public abstract T Get<T>(IStmMemory memoryRef) where T : struct;
+        public abstract object Get(IStmMemory memoryRef);
 
-        public abstract void Set<T>(IStmMemory memoryRef, object value, MemoryTuple<T> memoryTuple = null) where T : struct;
+        public abstract void Set(IStmMemory memoryRef, object value, MemoryTuple memoryTuple = null);
 
     }
 

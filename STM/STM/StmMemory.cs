@@ -3,11 +3,19 @@
 namespace STM
 {
 
-    public class StmMemory<T> : IStmMemory where T : struct
+    public class StmMemory<T> : IStmMemory, Transaction.IInnerTransactionStmMemory where T : struct
     {
 
         private T value;
         private int[] version;
+
+        public int[] Version
+        {
+            get
+            {
+                return version;
+            }
+        }
 
         public StmMemory() : this(default(T))
         {

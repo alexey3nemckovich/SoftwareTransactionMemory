@@ -18,13 +18,13 @@ namespace STM
         ITransaction          ParentTransaction { get; }
         List<ITransaction>    SubTransactions { get; }
         //Methods
-        void SetParentTransaction(ITransaction parentTransaction);
-        void AddSubTransaction(ITransaction subTransaction);
-        void Begin();
-        bool TryCommit();
-        void Rollback();
-        T    Get<T>(IStmMemory memoryRef) where T : struct;
-        void Set<T>(IStmMemory memoryRef, object value, MemoryTuple<T> memoryTuple = null) where T : struct;
+        void   SetParentTransaction(ITransaction parentTransaction);
+        void   AddSubTransaction(ITransaction subTransaction);
+        void   Begin();
+        bool   TryCommit();
+        void   Rollback();
+        object Get(IStmMemory memoryRef);
+        void   Set(IStmMemory memoryRef, object value, MemoryTuple memoryTuple = null);
     }
 
 }
